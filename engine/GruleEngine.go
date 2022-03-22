@@ -25,7 +25,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type logEntryCtxKey string
+type logEntryCtxKey struct{}
 
 var (
 	// Logger is a logrus instance with default fields for grule
@@ -33,7 +33,7 @@ var (
 		"package": "engine",
 	})
 	//LogEntryKey context key under which logrus.LogEntry is stored for particular evaluation run
-	LogEntryKey = logEntryCtxKey("gruleContextLog")
+	LogEntryKey = logEntryCtxKey{}
 )
 
 func loggerFromCtx(ctx context.Context) *logrus.Entry {
