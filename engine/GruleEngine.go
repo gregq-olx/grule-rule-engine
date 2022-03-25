@@ -25,12 +25,27 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type logEntryCtxKey struct{}
+
 var (
 	// Logger is a logrus instance with default fields for grule
 	log = logger.Log.WithFields(logrus.Fields{
 		"package": "engine",
 	})
+	//LogEntryKey context key under which logrus.LogEntry is stored for particular evaluation run
+	LogEntryKey = logEntryCtxKey{}
 )
+
+func loggerFromCtx(ctx context.Context) *logrus.Entry {
+	v := ctx.Value(LogEntryKey)
+	if v == nil {
+		return log
+	}
+	if logEntry, ok := v.(*logrus.Entry); ok {
+		return logEntry
+	}
+	return log
+}
 
 // NewGruleEngine will create new instance of GruleEngine struct.
 // It will set the max cycle to 5000
@@ -83,7 +98,8 @@ func (g *GruleEngine) notifyBeginCycle(cycle uint64) {
 // The engine will evaluate context cancelation status in each cycle.
 // The engine also do conflict resolution of which rule to execute.
 func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataContext, knowledge *ast.KnowledgeBase) error {
-	log.Debugf("Starting rule execution using knowledge '%s' version %s. Contains %d rule entries", knowledge.Name, knowledge.Version, len(knowledge.RuleEntries))
+	logEntry := loggerFromCtx(ctx)
+	logEntry.Debugf("Starting rule execution using knowledge '%s' version %s. Contains %d rule entries", knowledge.Name, knowledge.Version, len(knowledge.RuleEntries))
 
 	// Prepare the timer, we need to measure the processing time in debug mode.
 	startTime := time.Now()
@@ -97,12 +113,12 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 	dataCtx.Add("DEFUNC", defunc)
 
 	// Working memory need to be resetted. all Expression will be set as not evaluated.
-	log.Debugf("Resetting Working memory")
+	logEntry.Debugf("Resetting Working memory")
 	knowledge.WorkingMemory.ResetAll()
 	knowledge.Reset()
 
 	// Initialize all AST with datacontext and working memory
-	log.Debugf("Initializing Context")
+	logEntry.Debugf("Initializing Context")
 	knowledge.InitializeContext(dataCtx)
 
 	var cycle uint64
@@ -114,21 +130,21 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 	*/
 	for {
 		if ctx.Err() != nil {
-			log.Error("Context canceled")
+			logEntry.Error("Context canceled")
 			return ctx.Err()
 		}
 
 		g.notifyBeginCycle(cycle + 1)
 
 		// Select all rule entry that can be executed.
-		log.Tracef("Select all rule entry that can be executed.")
+		logEntry.Tracef("Select all rule entry that can be executed.")
 		runnable := make([]*ast.RuleEntry, 0)
 		for _, v := range knowledge.RuleEntries {
 			if !v.Retracted && !v.Deleted {
 				// test if this rule entry v can execute.
 				can, err := v.Evaluate(dataCtx, knowledge.WorkingMemory)
 				if err != nil {
-					log.Errorf("Failed testing condition for rule : %s. Got error %v", v.RuleName, err)
+					logEntry.Errorf("Failed testing condition for rule : %s. Got error %v", v.RuleName, err)
 					if g.ReturnErrOnFailedRuleEvaluation {
 						return err
 					}
@@ -144,17 +160,17 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 
 		// disabled to test the rete's variable change detection.
 		// knowledge.RuleContextReset()
-		log.Tracef("Selected rules %d.", len(runnable))
+		logEntry.Tracef("Selected rules %d.", len(runnable))
 
 		// If there are rules to execute, sort them by their Salience
 		if len(runnable) > 0 {
 			// add the cycle counter
 			cycle++
 
-			log.Debugf("Cycle #%d", cycle)
+			logEntry.Debugf("Cycle #%d", cycle)
 			// if cycle is above the maximum allowed cycle, returnan error indicated the cycle has ended.
 			if cycle > g.MaxCycle {
-				log.Error("Max cycle reached")
+				logEntry.Error("Max cycle reached")
 				return fmt.Errorf("the GruleEngine successfully selected rule candidate for execution after %d cycles, this could possibly caused by rule entry(s) that keep added into execution pool but when executed it does not change any data in context. Please evaluate your rule entries \"When\" and \"Then\" scope. You can adjust the maximum cycle using GruleEngine.MaxCycle variable", g.MaxCycle)
 			}
 
@@ -173,7 +189,7 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 			// execute the top most prioritized rule
 			err := runner.Execute(dataCtx, knowledge.WorkingMemory)
 			if err != nil {
-				log.Errorf("Failed execution rule : %s. Got error %v", runner.RuleName, err)
+				logEntry.Errorf("Failed execution rule : %s. Got error %v", runner.RuleName, err)
 				return err
 			}
 
@@ -182,11 +198,11 @@ func (g *GruleEngine) ExecuteWithContext(ctx context.Context, dataCtx ast.IDataC
 			}
 		} else {
 			// No more rule can be executed, so we are done here.
-			log.Debugf("No more rule to run")
+			logEntry.Debugf("No more rule to run")
 			break
 		}
 	}
-	log.Debugf("Finished Rules execution. With knowledge base '%s' version %s. Total #%d cycles. Duration %d ms.", knowledge.Name, knowledge.Version, cycle, time.Now().Sub(startTime).Nanoseconds()/1e6)
+	logEntry.Debugf("Finished Rules execution. With knowledge base '%s' version %s. Total #%d cycles. Duration %d ms.", knowledge.Name, knowledge.Version, cycle, time.Now().Sub(startTime).Nanoseconds()/1e6)
 	return nil
 }
 
